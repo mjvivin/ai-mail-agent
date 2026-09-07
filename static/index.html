@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>AI Mail Agent</title>
+  <style>
+    body { margin:0; font-family:Arial,sans-serif; background:#f4f6f8; color:#222; }
+    header { background:#202124; color:white; padding:16px 24px; font-size:22px; }
+    .layout { display:flex; height:calc(100vh - 58px); }
+    aside { width:210px; background:white; border-right:1px solid #ddd; padding:16px; }
+    main { flex:1; display:grid; grid-template-columns:1fr 360px; gap:16px; padding:16px; }
+    button { padding:10px 14px; margin:5px 0; cursor:pointer; border:1px solid #ccc; border-radius:7px; background:white; }
+    .primary { background:#202124; color:white; }
+    .panel { background:white; border:1px solid #ddd; border-radius:10px; overflow:hidden; }
+    .panel h3 { margin:0; padding:14px; border-bottom:1px solid #ddd; }
+    #emails { overflow:auto; height:calc(100vh - 145px); }
+    .email { padding:13px; border-bottom:1px solid #eee; cursor:pointer; }
+    .email:hover { background:#f7f7f7; }
+    .from { font-weight:bold; }
+    .subject { margin-top:5px; }
+    .snippet { color:#666; font-size:13px; margin-top:5px; }
+    #reader { padding:18px; overflow:auto; height:calc(100vh - 145px); box-sizing:border-box; }
+    #chat { height:calc(100vh - 190px); overflow:auto; padding:12px; }
+    .msg { margin:8px 0; padding:9px 11px; border-radius:8px; white-space:pre-wrap; }
+    .user { background:#e8f0fe; }
+    .agent { background:#f1f3f4; }
+    .chatbar { display:flex; gap:6px; padding:10px; border-top:1px solid #ddd; }
+    input { flex:1; padding:11px; border:1px solid #ccc; border-radius:7px; }
+    textarea { width:100%; box-sizing:border-box; min-height:130px; padding:10px; }
+    .compose { padding:15px; }
+    .compose input { width:100%; box-sizing:border-box; margin-bottom:8px; }
+    .hidden { display:none; }
+  </style>
+</head>
+<body>
+<header>🤖 AI Mail Agent</header>
+
+<div class="layout">
+  <aside>
+    <button type="button" class="primary" onclick="sendCompose()">Send</button>
+    <button onclick="loadSent()">📤 Sent</button><br>
+    <button onclick="showCompose()">✉️ Compose</button><br>
+    <button onclick="focusChat()">🤖 Ask AI</button>
+    <hr>
+    <small>Try:</small>
+    <p><button onclick="quick('Show unread emails')">Show unread</button></p>
+    <p><button onclick="quick('Find emails from Sarah')">Find Sarah</button></p>
+    <p><button onclick="quick('Show my latest email')">Latest email</button></p>
+  </aside>
+
+  <main>
+    <section class="panel">
+      <h3 id="title">Inbox</h3>
+      <div id="emails"></div>
+      <div id="reader" class="hidden"></div>
+      <<div id="compose" class="compose hidden">
+    <h3>Compose</h3>
+
+    <input id="to" placeholder="To">
+
+    <input id="subject" placeholder="Subject">
+
+    <textarea id="body" placeholder="Message"></textarea>
+
+    <button type="button"
+            class="primary"
+            onclick="sendCompose()">
+        Send
+    </button>
+</div>
+    </section>
+
+    <section class="panel">
+      <h3>AI Assistant</h3>
+      <div id="chat"></div>
+      <div class="chatbar">
+        <input id="command" placeholder="Tell the AI what to do..."
+               onkeydown="if(event.key==='Enter') askAI()">
+        <button class="primary" onclick="askAI()">Send</button>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+let currentScreen = "inbox";
+let selectedEmail = null;
+
+function addChat(text, who) {
+  const div = document.createElement("div");
+  div.className = "msg " + who;
+  div.textContent = text;
+  document.getElementById("chat").appendChild(div);
+  document.getElementById("chat").scrollTop =
+      document.getElementById("chat").scrollHeight;
+}
+
+function showCompose() {
+  document.getElementById("emails").classList.add("hidden");
+  document.getElementById("reader").classList.add("hidden");
+  document.getElementById("compose").classList.remove("hidden");
+  document.getElementById("title").textContent = "Compose";
+  currentScreen = "compose";
+}
+
+function focusChat() {
+  document.getElementById("command").focus();
+}
+
+function quick(text) {
+  document.getElementById("command").value = text;
+  askAI();
+}
+
+async function loadInbox() {
+  currentScreen = "inbox";
+  selectedEmail = null;
+  hideComposeReader();
+  document.getElementById("title").textContent = "Inbox";
+  const r = await fetch("/api/inbox");
+  renderEmails(await r.json());
+}
+
+async function loadSent() {
+  currentScreen = "sent";
+  selectedEmail = null;
+  hideComposeReader();
+  document.getElementById("title").textContent = "Sent";
+  const r = await fetch("/api/sent");
+  renderEmails(await r.json());
+}
+
+function hideComposeReader() {
+  document.getElementById("emails").classList.remove("hidden");
+  document.getElementById("reader").classList.add("hidden");
+  document.getElementById("compose").classList.add("hidden");
+}
+
+function renderEmails(emails) {
+  const box = document.getElementById("emails");
+  box.innerHTML = "";
+  emails.forEach(e => {
+    const d = document.createElement("div");
+    d.className = "email";
+    d.innerHTML = `
+      <div class="from">${escapeHtml(e.from || "")}</div>
+      <div class="subject">${escapeHtml(e.subject || "(no subject)")}</div>
+      <div class="snippet">${escapeHtml(e.snippet || "")}</div>`;
+    d.onclick = () => openEmail(e.id);
+    box.appendChild(d);
+  });
+}
+
+async function openEmail(id) {
+  const r = await fetch("/api/email/" + encodeURIComponent(id));
+  const e = await r.json();
+  selectedEmail = e;
+  currentScreen = "reader";
+
+  document.getElementById("emails").classList.add("hidden");
+  document.getElementById("compose").classList.add("hidden");
+  const reader = document.getElementById("reader");
+  reader.classList.remove("hidden");
+  reader.innerHTML = `
+    <h2>${escapeHtml(e.subject || "(no subject)")}</h2>
+    <p><b>From:</b> ${escapeHtml(e.from || "")}</p>
+    <p><b>To:</b> ${escapeHtml(e.to || "")}</p>
+    <hr>
+    <pre style="white-space:pre-wrap">${escapeHtml(e.body || "")}</pre>`;
+  document.getElementById("title").textContent = "Email";
+}
+
+async function sendCompose() {
+    console.log("SEND BUTTON CLICKED");
+
+    const to = document.getElementById("to").value.trim();
+    const subject = document.getElementById("subject").value.trim();
+    const body = document.getElementById("body").value.trim();
+
+    if (!to) {
+        alert("Please enter the recipient email address.");
+        return;
+    }
+
+    if (!subject) {
+        alert("Please enter a subject.");
+        return;
+    }
+
+    if (!body) {
+        alert("Please enter a message.");
+        return;
+    }
+
+    const sendButton = document.querySelector("#compose button");
+
+    sendButton.disabled = true;
+    sendButton.textContent = "Sending...";
+
+    try {
+        const response = await fetch("/api/send", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                to: to,
+                subject: subject,
+                body: body
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.detail || "Email sending failed");
+        }
+
+        alert(
+            "✅ Email sent successfully!\n\n" +
+            "Gmail Message ID: " + data.message_id
+        );
+
+        document.getElementById("to").value = "";
+        document.getElementById("subject").value = "";
+        document.getElementById("body").value = "";
+
+    } catch (error) {
+        console.error("SEND ERROR:", error);
+        alert("❌ Email was not sent.\n\n" + error.message);
+
+    } finally {
+        sendButton.disabled = false;
+        sendButton.textContent = "Send";
+    }
+}
+
+async function askAI() {
+  const input = document.getElementById("command");
+  const command = input.value.trim();
+  if (!command) return;
+
+  addChat(command, "user");
+  input.value = "";
+
+  const r = await fetch("/api/agent", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({
+      command,
+      screen: currentScreen,
+      selected_email: selectedEmail
+    })
+  });
+
+  const data = await r.json();
+  if (!r.ok) {
+    addChat("Error: " + (data.detail || "Request failed"), "agent");
+    return;
+  }
+
+  addChat(data.answer, "agent");
+
+  // Refresh the visible mailbox after an AI action.
+  if (data.actions?.some(a => a.tool === "list_emails")) {
+    const action = data.actions.find(a => a.tool === "list_emails");
+    renderEmails(action.result);
+    document.getElementById("title").textContent =
+      action.arguments.label === "SENT" ? "Sent" : "Inbox";
+    document.getElementById("emails").classList.remove("hidden");
+    document.getElementById("reader").classList.add("hidden");
+    document.getElementById("compose").classList.add("hidden");
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"
+  }[c]));
+}
+
+loadInbox();
+</script>
+</body>
+</html>
